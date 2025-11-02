@@ -36,6 +36,26 @@ export async function createOptionsMenu() {
   await addOptionMenu("debugEnable", "Debug mode", ["browser_action"], "checkbox");
   await addOptionMenu("autoGroupEnable", "Auto group tabs", ["browser_action"], "checkbox");
 
+  // LLMグループ化メニューを追加
+  await browser.contextMenus.create({
+    id: "llmGroupTabs",
+    title: "LLMでグループ化",
+    contexts: ["browser_action"],
+    onclick: () => {
+      browser.runtime.sendMessage({ type: "llm-group-tabs" });
+    }
+  });
+
+  // オプションページを開くメニュー
+  await browser.contextMenus.create({
+    id: "openOptions",
+    title: "LLM設定を開く",
+    contexts: ["browser_action"],
+    onclick: () => {
+      browser.runtime.openOptionsPage();
+    }
+  });
+
   const options = await browser.storage.local.get(OPTIONS_KEY);
   const currentOptions = options[OPTIONS_KEY];
   if (currentOptions.debugEnable) {

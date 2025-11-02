@@ -2,7 +2,7 @@
   "manifest_version": 2,
   "name": "TST Group Tabs by Domain",
   "version": "0.0.5",
-  "description": "Groups Tree Style Tabs by Domain",
+  "description": "Groups Tree Style Tabs by Domain with LLM-powered auto grouping",
   "browser_specific_settings": {
     "gecko": {
       "id": "tst_group_tabs_by_domain@stanah"
@@ -18,5 +18,9 @@
   "background": {
     "page": "bg.html"
   },
-  "permissions": ["tabs", "contextMenus", "<all_urls>", "storage"]
+  "options_ui": {
+    "page": "pages/options.html",
+    "open_in_tab": true
+  },
+  "permissions": ["tabs", "contextMenus", "<all_urls>", "storage", "notifications"]
 }

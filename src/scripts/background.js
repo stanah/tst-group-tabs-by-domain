@@ -4,6 +4,7 @@ const TST_ID = "treestyletab@piro.sakura.ne.jp";
 import { groupBy, matchGroupTab, sleep } from "./util.js";
 
 import { createOptionsMenu, getOption } from "./options.js";
+import { analyzeTabsWithLLM, getLLMOptions, isApiKeyConfigured } from "./llm.js";
 
 // 設定の型を定義する
 /**
@@ -82,6 +83,101 @@ async function groupAllTabs() {
     const faviconUrl = `http://www.google.com/s2/favicons?domain=${domain}`;
     await setFavicon(parentTab.id, faviconUrl);
     await sleep(1000);
+  }
+}
+
+/**
+ * LLMを使用してタブをグループ化する
+ */
+async function groupTabsWithLLM() {
+  try {
+    // API Keyが設定されているかチェック
+    const hasApiKey = await isApiKeyConfigured();
+    if (!hasApiKey) {
+      console.error("API Key is not configured");
+      browser.notifications.create({
+        type: "basic",
+        iconUrl: browser.runtime.getURL("icons/icon.svg"),
+        title: "TST Auto Grouper",
+        message: "API Keyが設定されていません。オプションページで設定してください。"
+      });
+      return;
+    }
+
+    // LLMが有効かチェック
+    const options = await getLLMOptions();
+    if (!options.enabled) {
+      console.log("LLM grouping is disabled");
+      return;
+    }
+
+    // タブを取得してフィルタリング
+    const tabs = await getCurrentWindowTabs();
+    const filteredTabs = await filterTabs(tabs);
+
+    if (filteredTabs.length < 2) {
+      console.log("Not enough tabs to group");
+      return;
+    }
+
+    // LLMでタブを分析
+    console.log("Analyzing tabs with LLM...");
+    const result = await analyzeTabsWithLLM(filteredTabs);
+
+    if (!result || !result.groups || result.groups.length === 0) {
+      console.log("No groups suggested by LLM");
+      return;
+    }
+
+    // グループを作成
+    console.log("Creating groups:", result.groups);
+    for (const group of result.groups) {
+      if (!group.tabIds || group.tabIds.length < 2) {
+        continue;
+      }
+
+      // グループのタブを先頭に移動
+      for (const tabId of group.tabIds) {
+        try {
+          await browser.runtime.sendMessage(TST_ID, {
+            type: "move-to-start",
+            tab: tabId,
+          });
+          await sleep(100);
+        } catch (e) {
+          console.error("Failed to move tab:", tabId, e);
+        }
+      }
+
+      // グループを作成
+      const parentTab = await tstGroupTabs(group.name, group.tabIds);
+
+      // グループの最初のタブのドメインからfaviconを取得
+      const firstTab = filteredTabs.find(t => t.id === group.tabIds[0]);
+      if (firstTab && firstTab.domain) {
+        const faviconUrl = `http://www.google.com/s2/favicons?domain=${firstTab.domain}`;
+        await setFavicon(parentTab.id, faviconUrl);
+      }
+
+      await sleep(1000);
+    }
+
+    // 成功通知
+    browser.notifications.create({
+      type: "basic",
+      iconUrl: browser.runtime.getURL("icons/icon.svg"),
+      title: "TST Auto Grouper",
+      message: `${result.groups.length}個のグループを作成しました`
+    });
+
+  } catch (error) {
+    console.error("Failed to group tabs with LLM:", error);
+    browser.notifications.create({
+      type: "basic",
+      iconUrl: browser.runtime.getURL("icons/icon.svg"),
+      title: "TST Auto Grouper - エラー",
+      message: "タブのグループ化に失敗しました: " + error.message
+    });
   }
 }
 
@@ -177,6 +273,55 @@ async function insertTabToGroup(tabId) {
   });
 }
 
+// 自動グループ化のインターバルID
+let autoGroupInterval = null;
+
+/**
+ * 自動グループ化を開始する
+ */
+async function startAutoGrouping() {
+  // 既存のインターバルをクリア
+  if (autoGroupInterval) {
+    clearInterval(autoGroupInterval);
+    autoGroupInterval = null;
+  }
+
+  const options = await getLLMOptions();
+
+  if (!options.enabled || !options.autoGroupEnabled) {
+    console.log("Auto grouping is disabled");
+    return;
+  }
+
+  console.log(`Starting auto grouping with interval: ${options.intervalMinutes} minutes`);
+
+  // インターバルを設定
+  autoGroupInterval = setInterval(async () => {
+    try {
+      const tabs = await getCurrentWindowTabs();
+      const filteredTabs = await filterTabs(tabs);
+
+      if (filteredTabs.length >= options.minTabsForGrouping) {
+        console.log("Auto grouping triggered");
+        await groupTabsWithLLM();
+      }
+    } catch (error) {
+      console.error("Auto grouping error:", error);
+    }
+  }, options.intervalMinutes * 60 * 1000);
+}
+
+/**
+ * 自動グループ化を停止する
+ */
+function stopAutoGrouping() {
+  if (autoGroupInterval) {
+    clearInterval(autoGroupInterval);
+    autoGroupInterval = null;
+    console.log("Auto grouping stopped");
+  }
+}
+
 // Listeners
 // ボタンがクリックされたときに呼び出されるリスナー
 browser.browserAction.onClicked.addListener(() => {
@@ -188,8 +333,21 @@ browser.tabs.onUpdated.addListener((tabId) => {
   insertTabToGroup(tabId);
 });
 
+// メッセージリスナー
+browser.runtime.onMessage.addListener((message, sender) => {
+  if (message.type === "llm-group-tabs") {
+    // LLMグループ化を実行
+    groupTabsWithLLM();
+  } else if (message.type === "settings-updated") {
+    // 設定が更新されたら自動グループ化を再起動
+    startAutoGrouping();
+  }
+});
+
 browser.runtime.onMessageExternal.addListener((message, sender) => {
   // console.log("message", message, sender);
 });
 
+// 初期化
 createOptionsMenu();
+startAutoGrouping();
